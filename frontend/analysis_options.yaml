@@ -1,0 +1,10 @@
+include: package:lint/strict.yaml
+
+analyzer:
+  exclude:
+    - build/**
+linter:
+  rules:
+    require_trailing_commas: false
+    sort_pub_dependencies: false
+    lines_longer_than_80_chars: false

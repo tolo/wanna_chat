@@ -1,0 +1,16 @@
+name: shared_model
+description: Just some shared data models
+version: 1.0.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+
+dependencies:
+  json_annotation: ^4.8.1
+
+dev_dependencies:
+  build_runner: ^2.4.8
+  json_serializable: ^6.7.1
+  lint: ^2.3.0
+  test: ^1.25.2

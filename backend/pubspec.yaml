@@ -13,36 +13,12 @@ dependencies:
   shelf_cors_headers: ^0.1.5
   dart_frog: ^1.1.0
 
-  #langchain: ^0.4.3
-  # NOTE: Using pre-release version that includes necessary bug fixes
-  langchain:
-    git:
-      url: https://github.com/davidmigloz/langchain_dart
-      path: packages/langchain
-
-  #langchain_openai: ^0.4.3
-  # NOTE: This override can be removed when updating "langchain" to a published version.
-  langchain_openai:
-    git:
-      url: https://github.com/davidmigloz/langchain_dart
-      path: packages/langchain_openai
-
-  #langchain_community: ^0.4.3
-  # NOTE: This override can be removed when updating "langchain" to a published version.
-  langchain_community:
-    git:
-      url: https://github.com/davidmigloz/langchain_dart
-      path: packages/langchain_community
+  langchain: ^0.6.0+1
+  langchain_community: ^0.1.0+2
+  langchain_openai: ^0.5.1+1
 
   shared_model:
     path: ../shared_model
-
-dependency_overrides:
-  # NOTE: Using pre-release version that includes necessary bug fixes. This override can be removed when updating "langchain" to a published version.
-  langchain_core:
-    git:
-      url: https://github.com/davidmigloz/langchain_dart
-      path: packages/langchain_core
 
 dev_dependencies:
   mocktail: ^1.0.0

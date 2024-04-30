@@ -65,14 +65,14 @@ class WannaChatService {
       defaultOptions: const ChatOpenAIOptions(
         temperature: 0.0,
         //model: 'gpt-3.5-turbo', // Default
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4-turbo',
       ),
     );
     _creativeModel = ChatOpenAI(
       apiKey: openAiApiKey,
       defaultOptions: const ChatOpenAIOptions(
         temperature: 1.0,
-        model: 'gpt-4-turbo-preview',
+        model: 'gpt-4-turbo',
       ),
     );
 
@@ -99,7 +99,7 @@ class WannaChatService {
   // --------------------
 
   Future<String> askQuestion({required String question, required String sessionId}) async {
-    final result = await _setupFinalAnswerChain(sessionId).invoke({'question': question});
+    final result = await _setupFinalAnswerChain(sessionId).invoke(question);
 
     // Save history
     final memory = _getMessageHistoryForSession(sessionId);
@@ -112,7 +112,7 @@ class WannaChatService {
   }
 
   Stream<String> askQuestionStreamed({required String question, required String sessionId}) {
-    return _setupFinalAnswerChain(sessionId).stream({'question': question});
+    return _setupFinalAnswerChain(sessionId).stream(question);
   }
 
   void saveHistory({required String question, required String result, required String sessionId}) {
@@ -184,7 +184,7 @@ class WannaChatService {
 
     /// Setup document retrieval chain
     _logger.fine('Setting up document retrieval chain...');
-    final convertDocsToString = RunnableFunction<List<Document>, String>((documents, options) {
+    final convertDocsToString = Runnable.mapInput<List<Document>, String>((documents) {
       final docs = documents.map((document) => '<doc>\n${document.pageContent}\n</doc>').join('\n');
       final info = documents.map((document) => '${document.id} (${document.metadata})').join(',');
       _logger.fine('Using documents: $info');
@@ -203,9 +203,9 @@ class WannaChatService {
     return _messageHistories.putIfAbsent(sessionId, () => ConversationBufferMemory(returnMessages: true));
   }
 
-  Runnable<Map<String, dynamic>, RunnableOptions, List<ChatMessage>> _messageHistory(String sessionId) {
-    return Runnable.fromFunction<Map<String, dynamic>, List<ChatMessage>>(
-      (input, __) async {
+  Runnable<String, RunnableOptions, List<ChatMessage>> _messageHistory(String sessionId) {
+    return Runnable.mapInput<String, List<ChatMessage>>(
+      (_) async {
         final memory = await _getMessageHistoryForSession(sessionId).loadMemoryVariables();
         final chatMessages = memory[BaseMemory.defaultMemoryKey] as List<ChatMessage>?;
         return chatMessages ?? [];
@@ -215,30 +215,25 @@ class WannaChatService {
 
   // Rephrasing / standalone question
 
-  Runnable<Map<String, dynamic>, RunnableOptions, String> _setupRephraseChain(
-      Runnable<Map<String, dynamic>, RunnableOptions, List<ChatMessage>> history) {
+  Runnable<String, RunnableOptions, String> _setupRephraseChain(
+      Runnable<String, RunnableOptions, List<ChatMessage>> history) {
     _logger.fine("Adding rephrasing support...");
 
     String formatChatHistory(List<ChatMessage> chatHistory) {
       final formattedDialogueTurns = chatHistory.map((entry) {
         if (entry is HumanChatMessage) {
-          return '${(entry.content as ChatMessageContentText).text}\n';
+          return '${entry.contentAsString}\n';
         }
         return '';
       });
       return formattedDialogueTurns.join();
     }
 
-    final rephraseQuestionChainPrompt = ChatPromptTemplate.fromPromptMessages([
-      HumanChatMessagePromptTemplate.fromTemplate(_rephraseQuestionPromptTemplate),
-    ]);
+    final rephraseQuestionChainPrompt = ChatPromptTemplate.fromTemplate(_rephraseQuestionPromptTemplate);
 
-    final chain = Runnable.fromMap<Map<String, dynamic>>({
-          'question': Runnable.getItemFromMap('question'),
-          //'history': history,
-          'history': history.pipe(
-            Runnable.fromFunction((history, _) => formatChatHistory(history)),
-          ),
+    final chain = Runnable.fromMap<String>({
+          'question': Runnable.passthrough(),
+          'history': history.pipe(Runnable.mapInput(formatChatHistory)),
         }) |
         rephraseQuestionChainPrompt |
         _logOutput<PromptValue>('rephraseQuestionChainPrompt') |
@@ -249,34 +244,29 @@ class WannaChatService {
 
   // Final answer chain
 
-  RunnableSequence<Map<String, dynamic>, String> _setupFinalAnswerChain(String sessionId) {
+  RunnableSequence<String, String> _setupFinalAnswerChain(String sessionId) {
     final hasHistory = _messageHistories.containsKey(sessionId);
     final history = _messageHistory(sessionId);
 
-    /// Answer generation propmpt
-    final answerGenerationChainPrompt = ChatPromptTemplate.fromPromptMessages([
-      SystemChatMessagePromptTemplate.fromTemplate(_finalAnswerPromptTemplate),
-      const MessagesPlaceholder(variableName: 'history'),
-      HumanChatMessagePromptTemplate.fromTemplate(_answerGenerationPromptTemplate),
+    /// Answer generation prompt
+    final answerGenerationChainPrompt = ChatPromptTemplate.fromTemplates(const [
+      (ChatMessageType.system, _finalAnswerPromptTemplate),
+      (ChatMessageType.messagesPlaceholder, 'history'),
+      (ChatMessageType.human, _answerGenerationPromptTemplate),
     ]);
 
     /// Rephrase question into standalone question
-    final Runnable<Map<String, dynamic>, RunnableOptions, String> rephrasedQuestion =
-        hasHistory ? _setupRephraseChain(history) : Runnable.getItemFromMap<String>('question');
+    final Runnable<String, RunnableOptions, String> rephrasedQuestion =
+        hasHistory ? _setupRephraseChain(history) : Runnable.passthrough<String>();
 
     /// Answer generation chain
     final answerChain =
-        Runnable.fromMap<Map<String, dynamic>>({
-          'standalone_question': Runnable.fromFunction<Map<String, dynamic>, String>((input, options) async {
-            // Executing rephrasedQuestion chain "manually", to make sure this part is always executed completely (even if streaming) before the next step
-            return await rephrasedQuestion.invoke(input);
-          }),
-        }) |
-        _logOutput<Map<String, dynamic>>('rephrase') |
-        Runnable.fromMap<Map<String, dynamic>>({
+        rephrasedQuestion |
+        _logOutput<String>('rephrase') |
+        Runnable.fromMap<String>({
           'history': history,
-          'question': Runnable.getItemFromMap<String>('standalone_question'),
-          'context':  Runnable.getItemFromMap<String>('standalone_question') | _documentRetrievalChain,
+          'question': Runnable.passthrough(),
+          'context':  Runnable.passthrough<String>() | _documentRetrievalChain,
         }) |
         answerGenerationChainPrompt |
         _creativeModel;
@@ -285,9 +275,9 @@ class WannaChatService {
   }
 
   Runnable<T, RunnableOptions, T> _logOutput<T extends Object>(String stepName) {
-    return Runnable.fromFunction((input, options) {
+    return Runnable.mapInput((input) {
       _logger.fine('Result from step "$stepName": $input');
-      return Future.value(input);
+      return input;
     });
   }
 }
